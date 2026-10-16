@@ -1,0 +1,20 @@
+# Tiny, fast configuration used by CI and `make smoke` with the synthetic data source.
+market: US
+fidelity: corrected
+start: "2006-01-01"
+end: "2026-03-31"
+data_dir: data_smoke
+output_dir: outputs_smoke
+universe:
+  top_n_liquidity: 60
+ppo:
+  passes: 2
+  n_steps: 64
+  batch_size: 32
+  n_epochs: 2
+  net_arch: [32, 32]
+selection:
+  seeds: [1, 2, 3]
+robustness:
+  bootstrap_reps: 200
+  mc_paths: 200

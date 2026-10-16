@@ -1,0 +1,17 @@
+# S&P 500 run used in the TFG.
+market: US
+fidelity: corrected        # "tfg" reproduces the thesis logic exactly (defects included)
+start: "2006-01-01"
+end: "2026-03-31"          # fixed so runs are reproducible
+data_dir: data
+output_dir: outputs
+transaction_cost: 0.0020   # 20 bps per monthly rebalance
+
+split:
+  val_start: "2021-01-01"
+  test_start: "2023-01-01"
+
+selection:
+  seeds: [42, 7, 13, 99, 2025, 1337, 888, 314, 777, 555]
+  softmax_temperature: 0.5
+  max_ensemble: 3
