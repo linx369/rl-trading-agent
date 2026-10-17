@@ -80,7 +80,15 @@ class RegimeDetector:
                 tol=self.config.tol,
                 random_state=self.config.random_state + i,
             )
-            model.fit(x)
+            # hmmlearn logs a WARNING whenever one EM step lowers the likelihood by a rounding
+            # error; across restarts that is pure noise, so it is silenced during the fit.
+            hmm_log = logging.getLogger("hmmlearn.base")
+            previous = hmm_log.level
+            hmm_log.setLevel(logging.ERROR)
+            try:
+                model.fit(x)
+            finally:
+                hmm_log.setLevel(previous)
             ll = model.score(x)
             if ll > best_ll:
                 best, best_ll = model, ll

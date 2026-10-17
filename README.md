@@ -42,7 +42,7 @@ make test                    # unit + integration tests, no network needed
 make smoke                   # whole pipeline on synthetic data (~30 s)
 
 make ingest                  # download 20 years of S&P 500 prices into data/US/*.parquet
-make run                     # corrected methodology (10 seeds; ~1-2 h on a laptop CPU)
+make run                     # corrected methodology (10 seeds; ~2 min on a laptop CPU)
 make run-tfg                 # reproduce the thesis logic exactly
 make compare                 # both runs side by side, straight from SQL
 ```
@@ -196,24 +196,38 @@ CI runs lint, the full test suite on Python 3.10 and 3.12, and a synthetic end-t
 
 ## Results
 
-Out-of-sample results reported in the thesis (`tfg` logic, seed 2025, Jan 2023 – Mar 2026):
+Real S&P 500 data, 2006 – March 2026 (500 of 503 current constituents; three listed too
+recently to have prices). Out-of-sample test: 2023 – early 2026. Ten PPO seeds per mode,
+selected on the 2021–2022 validation block only.
 
-| | Agent | SPY |
-|---|---|---|
-| Annual return | 25.02% | 17.56% |
-| Annual volatility | 20.09% | 11.99% |
-| Sharpe ratio | 1.25 | 1.46 |
-| Information ratio | 0.51 | – |
-| Max drawdown | −21.58% | −8.33% |
-| Alpha (annual, vs SPY) | +7.47% | – |
-| 90% bootstrap CI for alpha | [−10.33%, +35.08%] | – |
+| | `tfg` (thesis logic) | `corrected` | SPY |
+|---|---|---|---|
+| Alpha (annual, vs SPY) | **+10.95%** | **+1.91%** | – |
+| Information ratio | 0.58 | 0.21 | – |
+| Sharpe ratio | 1.26 | 0.85 | 1.46 – 1.73 |
+| Annual volatility | 24.54% | 22.85% | 11.6 – 12.0% |
+| Max drawdown | −26.15% | −16.14% | −8.33% |
+| 90% bootstrap CI for alpha | [−10.9%, +59.9%] | [−7.4%, +23.5%] | – |
+| Test months | 37 | 38 | – |
+| Seed chosen on validation | 777 | 2025 | – |
 
-The agent earned more than the index but with more risk: its Sharpe and Calmar ratios were
-lower, and the bootstrap interval for alpha includes zero, so the outperformance is not
-statistically significant over 39 months.
+**Reading the table**
 
-> **Corrected-mode results on real data:** _to be added after running `make ingest run`._
-> Because the corrected mode removes look-ahead from the regime model, expect weaker numbers.
+- **The thesis logic reproduces.** Re-running the original methodology on fresh data gives
+  an alpha of the same sign and size as the thesis (+7.47%; the gap comes from today's
+  constituent list, data revisions and a different seed winning validation).
+- **Most of that alpha does not survive the corrections.** With look-ahead removed from the
+  regime model and indicators, and momentum computed on the intended 12-1 window, alpha falls
+  from about +11% to about +2% a year and the information ratio from 0.58 to 0.21.
+- **Neither result is statistically significant.** Both bootstrap intervals include zero, and
+  both agents take roughly twice the index's volatility with a lower Sharpe ratio.
+- **Every seed lost to SPY on validation** (2021–2022, including the 2022 bear market), in
+  both modes, so selection picked the least-bad seed rather than a proven one.
+
+`tfg` reports 37 test months because the original environment never traded the last month;
+compare alphas and ratios rather than raw returns, since the benchmark window differs by one
+month. Thesis figures for reference: agent 25.02% vs SPY 17.56%, alpha +7.47%, IR 0.51,
+Sharpe 1.25 vs 1.46, max drawdown −21.58%, 90% CI for alpha [−10.33%, +35.08%].
 
 Each run writes `outputs/<market>_<mode>/` containing `summary.json`, `bootstrap_ci.csv`,
 `cross_seed_test_metrics.csv`, `seed_selection.csv`, `test_record.csv`, `hmm_profile.md`
