@@ -73,16 +73,54 @@ def yf_frame_to_long(raw: pd.DataFrame, tickers: Sequence[str]) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def raise_open_file_limit(target: int = 4096) -> int:
+    """Raise this process's soft limit on open files (macOS defaults to 256).
+
+    yfinance opens a network connection and a SQLite cache handle per download thread;
+    with the low macOS default this runs out mid-ingest and every request then fails with
+    "unable to open database file" or "Could not resolve host". Returns the new soft limit.
+    """
+    try:
+        import resource
+    except ImportError:  # Windows
+        return -1
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    want = target if hard == resource.RLIM_INFINITY else min(target, hard)
+    if soft != resource.RLIM_INFINITY and soft < want:
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+            soft = want
+        except (ValueError, OSError) as exc:
+            log.warning("could not raise open-file limit from %d: %s", soft, exc)
+    return soft
+
+
 class YahooSource:
-    """Batched yfinance downloader with per-ticker retry for failed or partial batches."""
+    """Batched yfinance downloader with throttled, retried per-ticker fallbacks.
+
+    Network use is deliberately conservative: a few download threads, a pause between
+    batches and between single-ticker retries, and a long back-off on rate limiting.
+    """
 
     name = "yahoo"
 
-    def __init__(self, batch_size: int = 100, pause: float = 2.0, downloader=None) -> None:
+    def __init__(
+        self,
+        batch_size: int = 50,
+        pause: float = 2.0,
+        threads: int = 4,
+        retry_pause: float = 0.3,
+        rate_limit_wait: float = 60.0,
+        downloader=None,
+    ) -> None:
         self.batch_size = batch_size
         self.pause = pause
+        self.retry_pause = retry_pause
+        self.rate_limit_wait = rate_limit_wait
         if downloader is None:
             import yfinance as yf
+
+            raise_open_file_limit()
 
             def downloader(tks, start, end):
                 return yf.download(
@@ -92,7 +130,8 @@ class YahooSource:
                     auto_adjust=False,
                     progress=False,
                     group_by="column",
-                    threads=True,
+                    threads=threads,
+                    timeout=30,
                 )
 
         self._download = downloader
@@ -102,6 +141,7 @@ class YahooSource:
         end_excl = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         parts: list[pd.DataFrame] = []
         batches = list(_batched(list(tickers), self.batch_size))
+        failed: list[str] = []
         for i, batch in enumerate(batches, 1):
             log.info("Downloading batch %d/%d (%d tickers)", i, len(batches), len(batch))
             got = self._safe(batch, start, end_excl)
@@ -109,22 +149,41 @@ class YahooSource:
             if missing:
                 log.info("  retrying %d missing tickers one by one", len(missing))
                 for t in missing:
+                    if self.retry_pause:
+                        time.sleep(self.retry_pause)
                     single = self._safe([t], start, end_excl)
-                    if not single.empty:
+                    if single.empty:
+                        failed.append(t)
+                    else:
                         got = pd.concat([got, single], ignore_index=True)
             parts.append(got)
             if i < len(batches) and self.pause:
                 time.sleep(self.pause)
-        out = pd.concat(parts, ignore_index=True) if parts else empty_prices()
-        return out
+        if failed:
+            log.warning(
+                "%d of %d tickers returned no data (e.g. %s). Re-running ingest retries only "
+                "these.",
+                len(failed),
+                len(tickers),
+                ", ".join(failed[:8]),
+            )
+        return pd.concat(parts, ignore_index=True) if parts else empty_prices()
 
     def _safe(self, tickers: list[str], start: str, end: str) -> pd.DataFrame:
-        try:
-            raw = self._download(tickers if len(tickers) > 1 else tickers[0], start, end)
-            return yf_frame_to_long(raw, tickers)
-        except Exception as exc:  # network / parsing failures must not kill the batch
-            log.warning("download failed for %s…: %s", tickers[:3], exc)
-            return empty_prices()
+        """One download call; never raises. Waits and retries once if rate limited."""
+        for attempt in (1, 2):
+            try:
+                raw = self._download(tickers if len(tickers) > 1 else tickers[0], start, end)
+                return yf_frame_to_long(raw, tickers)
+            except Exception as exc:  # network / parsing failures must not kill the batch
+                rate_limited = "ratelimit" in type(exc).__name__.lower() or "Too Many" in str(exc)
+                if rate_limited and attempt == 1:
+                    log.warning("rate limited by Yahoo; waiting %.0f s", self.rate_limit_wait)
+                    time.sleep(self.rate_limit_wait)
+                    continue
+                log.warning("download failed for %s…: %s", tickers[:3], exc)
+                break
+        return empty_prices()
 
 
 class SyntheticSource:

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from regime_rl.config import Config
+from regime_rl.config import Config, SplitConfig
 from regime_rl.data.ingest import ingest, plan_fetches
 from regime_rl.data.sources import (
     PRICE_COLUMNS,
@@ -163,7 +163,9 @@ def test_yahoo_source_retries_missing_tickers():
         )
         return pd.DataFrame(1.0, index=idx, columns=cols)
 
-    out = YahooSource(pause=0, downloader=fake).fetch(["AAA", "FLAKY"], "2024-01-01", "2024-01-02")
+    out = YahooSource(pause=0, retry_pause=0, downloader=fake).fetch(
+        ["AAA", "FLAKY"], "2024-01-01", "2024-01-02"
+    )
     assert sorted(out["ticker"]) == ["AAA", "FLAKY"]
     assert calls[-1] == "FLAKY"
 
@@ -172,7 +174,11 @@ def test_yahoo_source_survives_exceptions():
     def boom(*_):
         raise ConnectionError("no network")
 
-    assert YahooSource(pause=0, downloader=boom).fetch(["A"], "2024-01-01", "2024-01-02").empty
+    assert (
+        YahooSource(pause=0, retry_pause=0, downloader=boom)
+        .fetch(["A"], "2024-01-01", "2024-01-02")
+        .empty
+    )
 
 
 # ----------------------------------------------------------------- universe
@@ -189,3 +195,66 @@ def test_fetch_sp500_falls_back():
     assert src == "c" and len(syms) == 450
     with pytest.raises(RuntimeError, match="a: down"):
         fetch_sp500((("a", broken),))
+
+
+def test_ingest_reports_missing_tickers_and_requires_benchmark(tmp_path):
+    from regime_rl.data.ingest import IngestError
+
+    class Flaky:
+        """Returns data for every ticker except the ones listed."""
+
+        name = "flaky"
+
+        def __init__(self, broken):
+            self.broken = set(broken)
+            self.real = SyntheticSource()
+
+        def fetch(self, tickers, start, end):
+            ok = [t for t in tickers if t not in self.broken]
+            return self.real.fetch(ok, start, end) if ok else self.real.fetch([], start, end)
+
+    cfg = Config(
+        market_code="CN",
+        data_dir=str(tmp_path),
+        start="2018-01-01",
+        end="2019-12-31",
+        split=SplitConfig("2019-01-01", "2019-06-01"),
+    )
+    store = MarketStore(tmp_path, "CN")
+    log = ingest(cfg, Flaky({"BABA", "JD"}), store)
+    stocks = log.set_index("table").loc["prices"]
+    assert stocks["tickers_missing"] == 2 and "BABA" in stocks["missing_sample"]
+
+    with pytest.raises(IngestError, match="benchmark FXI"):
+        ingest(cfg, Flaky({"FXI"}), MarketStore(tmp_path / "b", "CN"))
+
+
+def test_raise_open_file_limit():
+    import resource
+
+    from regime_rl.data.sources import raise_open_file_limit
+
+    soft = raise_open_file_limit(1024)
+    assert soft == resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    assert soft >= min(1024, resource.getrlimit(resource.RLIMIT_NOFILE)[1])
+
+
+def test_yahoo_source_waits_and_retries_when_rate_limited():
+    calls = []
+
+    class YFRateLimitError(Exception):
+        pass
+
+    def limited_once(tickers, start, end):
+        calls.append(tickers)
+        if len(calls) == 1:
+            raise YFRateLimitError("Too Many Requests")
+        idx = pd.to_datetime(["2024-01-02"])
+        cols = pd.MultiIndex.from_product(
+            [["Adj Close", "Close", "High", "Low", "Open", "Volume"], ["AAA", "BBB"]]
+        )
+        return pd.DataFrame(1.0, index=idx, columns=cols)
+
+    src = YahooSource(pause=0, retry_pause=0, rate_limit_wait=0, downloader=limited_once)
+    out = src.fetch(["AAA", "BBB"], "2024-01-01", "2024-01-02")
+    assert len(calls) == 2 and sorted(out["ticker"]) == ["AAA", "BBB"]

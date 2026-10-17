@@ -21,15 +21,19 @@ def _source(name: str, cfg):
 
 
 def cmd_ingest(args) -> int:
-    from regime_rl.data.ingest import ingest
+    from regime_rl.data.ingest import IngestError, ingest
 
     cfg = load_config(args.config, data_dir=args.data_dir)
-    log = ingest(cfg, _source(args.source, cfg), full_refresh=args.full_refresh)
-    print(
-        log[
-            ["table", "tickers_requested", "tickers_fetched", "rows_fetched", "rows_dropped"]
-        ].to_string(index=False)
-    )
+    try:
+        log = ingest(cfg, _source(args.source, cfg), full_refresh=args.full_refresh)
+    except IngestError as exc:
+        print(f"\nIngest incomplete: {exc}", file=sys.stderr)
+        return 1
+    cols = ["table", "tickers_requested", "tickers_stored", "tickers_missing", "rows_fetched"]
+    print(log[cols].to_string(index=False))
+    for row in log.itertuples():
+        if row.tickers_missing:
+            print(f"  {row.table}: no data yet for {row.missing_sample}…")
     return 0
 
 

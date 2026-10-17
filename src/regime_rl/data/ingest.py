@@ -19,6 +19,12 @@ from regime_rl.data.universe import resolve_universe
 
 log = logging.getLogger(__name__)
 
+MIN_COVERAGE = 0.9  # warn when fewer than 90% of the universe has prices
+
+
+class IngestError(RuntimeError):
+    """Ingestion finished without the data needed to run the pipeline."""
+
 
 def plan_fetches(
     tickers: Sequence[str],
@@ -64,10 +70,15 @@ def _ingest_table(
         report = store.upsert_prices(df, table)
         fetched += report.rows_in
         dropped += report.dropped
+    stored = set(store.last_dates(table).index) if store.has(table) else set()
+    missing = sorted(set(tickers) - stored)
     return {
         "table": table,
         "tickers_requested": len(tickers),
         "tickers_fetched": sum(len(g) for g in plan.values()),
+        "tickers_stored": len(set(tickers) & stored),
+        "tickers_missing": len(missing),
+        "missing_sample": ", ".join(missing[:10]),
         "rows_fetched": fetched,
         "rows_dropped": dropped,
     }
@@ -102,4 +113,19 @@ def ingest(
         ingested_at=pd.Timestamp(now), source=source.name, start=cfg.start, end=cfg.end
     )
     store.append_table("ingest_log", log_rows)
+
+    stocks, etfs = results
+    etf_stored = set(store.last_dates("etf_prices").index) if store.has("etf_prices") else set()
+    if market.benchmark not in etf_stored:
+        raise IngestError(
+            f"The benchmark {market.benchmark} could not be downloaded, so nothing can run. "
+            "This is usually a network or Yahoo rate-limit problem: wait a few minutes and "
+            "run ingest again (it only fetches what is missing)."
+        )
+    if stocks["tickers_stored"] < MIN_COVERAGE * stocks["tickers_requested"]:
+        log.warning(
+            "Only %d of %d stocks have data. Run ingest again to fill the gaps before `run`.",
+            stocks["tickers_stored"],
+            stocks["tickers_requested"],
+        )
     return log_rows

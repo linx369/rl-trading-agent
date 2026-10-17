@@ -13,7 +13,7 @@ Prof. Eulàlia Nualart). The original single-file research script is kept in
 [`legacy/`](legacy/) for reference.
 
 ```
-134 tests · 96% line coverage · ruff-clean · CI on Python 3.10 and 3.12
+137 tests · 96% line coverage · ruff-clean · CI on Python 3.10 and 3.12
 full pipeline runs offline on synthetic data in ~30 s
 ```
 
@@ -173,7 +173,7 @@ All thirteen differences, their expected effect and the tests that pin them are 
 ## Testing
 
 ```bash
-make test       # 131 fast tests, ~45 s
+make test       # 134 fast tests, ~45 s
 make test-all   # + PPO end-to-end runs and coverage report
 ```
 
