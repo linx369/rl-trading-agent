@@ -196,57 +196,54 @@ CI runs lint, the full test suite on Python 3.10 and 3.12, and a synthetic end-t
 
 ## Results
 
-Real S&P 500 data, 2006 – March 2026 (500 of 503 current constituents; three listed too
-recently to have prices). Out-of-sample test: 2023 – early 2026. Ten PPO seeds per mode,
-selected on the 2021–2022 validation block only.
+Real S&P 500 data, 2006 – March 2026 (500 of 503 current constituents). Out-of-sample test:
+January 2023 – early 2026. Ten PPO seeds per mode, selected on 2021–2022 validation only.
+Every strategy pays 0.20% per month; alpha is the annual return minus SPY's.
 
-| | `tfg` (thesis logic) | `corrected` | SPY |
-|---|---|---|---|
-| Alpha (annual, vs SPY) | **+10.95%** | **+1.91%** | – |
-| Information ratio | 0.58 | 0.21 | – |
-| Sharpe ratio | 1.26 | 0.85 | 1.46 – 1.73 |
-| Annual volatility | 24.54% | 22.85% | 11.6 – 12.0% |
-| Max drawdown | −26.15% | −16.14% | −8.33% |
-| 90% bootstrap CI for alpha | [−10.9%, +59.9%] | [−7.4%, +23.5%] | – |
-| Test months | 37 | 38 | – |
-| Seed chosen on validation | 777 | 2025 | – |
+### Headline: with the leaks fixed, simple strategies beat the agent
+
+| Strategy | `tfg` (thesis logic) | `corrected` |
+|---|---|---|
+| **RL agent** | **+10.95%** (IR 0.58) | **+0.34%** (IR 0.12) |
+| Top 30 momentum, always | −2.91% | +4.75% |
+| Best single strategy, chosen before 2023 | +3.89% | −13.17% |
+| Equal mix of all 8 strategies | −0.78% | **+10.64%** (IR 0.71) |
+| Momentum, bonds when P(bear) > 0.40 | −5.43% | +4.75% |
 
 **Reading the table**
 
-- **The thesis logic reproduces.** Re-running the original methodology on fresh data gives
-  an alpha of the same sign and size as the thesis (+7.47%; the gap comes from today's
-  constituent list, data revisions and a different seed winning validation).
-- **Most of that alpha does not survive the corrections.** With look-ahead removed from the
-  regime model and indicators, and momentum computed on the intended 12-1 window, alpha falls
-  from about +11% to about +2% a year and the information ratio from 0.58 to 0.21.
-- **Neither result is statistically significant.** Both bootstrap intervals include zero, and
-  both agents take roughly twice the index's volatility with a lower Sharpe ratio.
-- **Every seed lost to SPY on validation** (2021–2022, including the 2022 bear market), in
-  both modes, so selection picked the least-bad seed rather than a proven one.
+- **With the thesis logic, the agent looks brilliant**: it beats every simple strategy by at
+  least 7 points a year. That is what you would expect if it is exploiting information
+  it should not have. The regime probabilities in that mode were estimated using future data.
+- **With the leaks removed, the agent's edge disappears** (+0.34% a year) and it is beaten by
+  plainly holding the top 30 momentum stocks (+4.75%) and, by a wide margin, by an equal split
+  across the same eight portfolios (+10.64%). The value is in the portfolios, not in the
+  learned selection, consistent with DeMiguel, Garlappi & Uppal (2009) on how hard naive
+  1/N diversification is to beat.
+- **The regime rule never fired out of sample** in corrected mode (identical to plain momentum):
+  P(bear) never exceeded 40% in 2023–2026, so the crash protection was never tested.
+- **Picking the historical winner backfired**: the strategy with the best record before 2023
+  lost 13% a year relative to SPY afterwards.
+- **Nothing here is statistically significant.** Every 90% block-bootstrap interval for alpha
+  includes zero (corrected agent: −10.6% to +27.9%; equal mix: −3.6% to +28.1%). Every seed
+  also lost to SPY on the 2021–2022 validation period, which includes the 2022 bear market.
 
-`tfg` reports 37 test months because the original environment never traded the last month;
-compare alphas and ratios rather than raw returns, since the benchmark window differs by one
-month. Thesis figures for reference: agent 25.02% vs SPY 17.56%, alpha +7.47%, IR 0.51,
-Sharpe 1.25 vs 1.46, max drawdown −21.58%, 90% CI for alpha [−10.33%, +35.08%].
+`tfg` trades 37 test months because the original environment skipped the last month. The two
+modes also differ in how momentum is measured and which stocks pass the liquidity filter, so
+compare rows within a column, not across. Thesis figures for reference: alpha +7.47%, IR 0.51,
+Sharpe 1.25 vs 1.46, 90% CI for alpha [−10.33%, +35.08%].
 
-### Is the RL agent worth its complexity?
+### How the comparison works
 
-Every run also scores a ladder of simpler strategies on exactly the same test months, with
-the same cost-adjusted returns, so the agent has to earn its place:
+Every run scores the simple strategies above on exactly the same test months and the same
+cost-adjusted monthly returns as the agent. The "best single strategy" is chosen on
+information ratio using train and validation data only, and a test checks that test-period
+returns cannot influence that choice. The table is printed at the end of `make run`, saved
+as `baselines.csv` and the `baselines_<mode>` table, and drawn in `figures/panel_G_baselines.png`
+([`evaluation/baselines.py`](src/regime_rl/evaluation/baselines.py)).
 
-| Strategy | What it adds |
-|---|---|
-| Buy & hold SPY | the benchmark |
-| Top 30 momentum, always | momentum only |
-| Best single strategy | the one action with the best pre-test information ratio, held throughout |
-| Equal mix of all 8 strategies | diversification, no selection |
-| Momentum, bonds when P(bear) > 0.40 | the regime model as a plain rule, no RL |
-| RL agent | learned selection across all eight |
-
-The table is printed at the end of `make run`, saved as `baselines.csv`, stored in the
-`baselines_<mode>` table, and drawn in `figures/panel_G_baselines.png`. The logic is in
-[`evaluation/baselines.py`](src/regime_rl/evaluation/baselines.py); tests check that the
-"best single strategy" is chosen without looking at test-period returns.
+Training is deterministic (single-threaded PyTorch), so the same config and data give the
+same agent on every run.
 
 Each run writes `outputs/<market>_<mode>/` containing `summary.json`, `bootstrap_ci.csv`,
 `cross_seed_test_metrics.csv`, `seed_selection.csv`, `test_record.csv`, `hmm_profile.md`
