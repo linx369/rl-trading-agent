@@ -159,3 +159,35 @@ def plot_all(
     _style(ax, f"Monte Carlo: {mc['paths'].shape[0]:,} bootstrapped two-year paths")
     paths.append(_save(fig, out / "panel_F_monte_carlo.png"))
     return paths
+
+
+LADDER_COLORS = {
+    "momentum_30": SERIES[1],
+    "best_fixed": SERIES[2],
+    "equal_mix": SERIES[3],
+    "hmm_switch": SERIES[6],
+    "agent": SERIES[0],
+}
+
+
+def plot_baselines(table: pd.DataFrame, rets: pd.DataFrame, out: Path) -> Path:
+    """Cumulative return of every baseline and the agent over the test months."""
+    out.mkdir(parents=True, exist_ok=True)
+    fig, ax = _fig(4.4)
+    w = (1 + rets["spy"]).cumprod() - 1
+    ax.plot(w.index, 100 * w, color=BENCH, lw=2.5, label=table.loc["spy", "label"])
+    for key, color in LADDER_COLORS.items():
+        w = (1 + rets[key]).cumprod() - 1
+        lw = 2.5 if key == "agent" else 1.6
+        a = table.loc[key, "alpha"]
+        ax.plot(
+            w.index,
+            100 * w,
+            color=color,
+            lw=lw,
+            label=f"{table.loc[key, 'label']} ({a:+.1%}/yr vs benchmark)",
+        )
+    ax.set_ylabel("Cumulative return (%)", color=MUTED)
+    ax.legend(frameon=False, fontsize=8, labelcolor=TEXT, loc="upper left")
+    _style(ax, "Does the RL agent beat simpler strategies? (out of sample)")
+    return _save(fig, out / "panel_G_baselines.png")

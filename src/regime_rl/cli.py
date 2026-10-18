@@ -73,7 +73,12 @@ def cmd_run(args) -> int:
     print(f"{'Information ratio':<20}{m['ir']:>11.2f}")
     ci = res.bootstrap.loc["alpha"]
     print(f"\nAlpha 90% block-bootstrap CI: [{ci.ci_lower:+.2%}, {ci.ci_upper:+.2%}]")
-    print(f"Outputs: {res.out_dir}")
+    if res.baselines is not None:
+        from regime_rl.evaluation.baselines import format_table
+
+        print(f"\nSimpler strategies over the same {len(res.test_record)} months")
+        print(format_table(res.baselines))
+    print(f"\nOutputs: {res.out_dir}")
     return 0
 
 

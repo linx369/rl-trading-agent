@@ -21,6 +21,7 @@ from regime_rl.config import Config
 from regime_rl.data.store import MarketStore
 from regime_rl.env.reward import zscore_to_unit
 from regime_rl.env.trading_env import EpisodeData
+from regime_rl.evaluation.baselines import baseline_table
 from regime_rl.evaluation.metrics import benchmark_metrics, compute_metrics
 from regime_rl.evaluation.robustness import block_bootstrap, monte_carlo
 from regime_rl.features.panel import (
@@ -156,6 +157,7 @@ class RunResult:
     seed_scores: pd.DataFrame
     cross_seed: pd.DataFrame
     out_dir: Path
+    baselines: pd.DataFrame | None = None
 
 
 def evaluate(ds: Dataset, sel: SelectionResult, test: EpisodeData) -> dict:
@@ -178,6 +180,12 @@ def evaluate(ds: Dataset, sel: SelectionResult, test: EpisodeData) -> dict:
         rb.random_state,
         compound_benchmark=not cfg.tfg,
     )
+    history = ds.episode.slice(
+        np.asarray(pd.DatetimeIndex(ds.episode.dates) < pd.Timestamp(cfg.split.test_start))
+    )
+    seeds = ", ".join(map(str, sel.policy.seeds))
+    detail = ("ensemble of seeds " if sel.policy.is_ensemble else "seed ") + seeds
+    ladder, ladder_rets = baseline_table(test, history, rec, cfg, agent_detail=detail)
     cross = []
     for seed, agent in sel.agents.items():
         r = rollout(agent, test, cfg)
@@ -189,6 +197,8 @@ def evaluate(ds: Dataset, sel: SelectionResult, test: EpisodeData) -> dict:
         "bootstrap": boot,
         "mc": mc,
         "cross_seed": pd.DataFrame(cross),
+        "baselines": ladder,
+        "baseline_returns": ladder_rets,
     }
 
 
@@ -214,10 +224,11 @@ def run(cfg: Config, store: MarketStore | None = None, plots: bool = True) -> Ru
     ev = evaluate(ds, sel, test)
     _persist(cfg, store, ds, sel, ev, run_id, out, (train, val, test))
     if plots:
-        from regime_rl.reporting.plots import plot_all
+        from regime_rl.reporting.plots import plot_all, plot_baselines
 
         label = "Ensemble" if sel.policy.is_ensemble else f"Agent (seed {sel.policy.seeds[0]})"
         plot_all(ev["record"], ds.regimes_raw, ev["mc"], out / "figures", label)
+        plot_baselines(ev["baselines"], ev["baseline_returns"], out / "figures")
     return RunResult(
         run_id,
         ev["metrics"],
@@ -228,6 +239,7 @@ def run(cfg: Config, store: MarketStore | None = None, plots: bool = True) -> Ru
         sel.seed_scores,
         ev["cross_seed"],
         out,
+        ev["baselines"],
     )
 
 
@@ -266,6 +278,10 @@ def _persist(
         },
         "metrics": ev["metrics"],
         "benchmark": ev["bench"],
+        "baselines": {
+            k: {"alpha": r["alpha"], "ir": r["ir"], "sharpe": r["sharpe"], "max_dd": r["max_dd"]}
+            for k, r in ev["baselines"][["alpha", "ir", "sharpe", "max_dd"]].iterrows()
+        },
         "monte_carlo": {k: v for k, v in ev["mc"].items() if k != "paths"},
         "action_share": ev["record"]["action"].value_counts(normalize=True).sort_index().to_dict(),
         "config": cfg.to_dict(),
@@ -273,6 +289,9 @@ def _persist(
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
     ev["bootstrap"].to_csv(out / "bootstrap_ci.csv")
     ev["cross_seed"].to_csv(out / "cross_seed_test_metrics.csv", index=False)
+    ladder = ev["baselines"]
+    ladder.to_csv(out / "baselines.csv")
+    store.write_table(f"baselines_{tag}", ladder.reset_index().assign(run_id=run_id))
     sel.seed_scores.to_csv(out / "seed_selection.csv", index=False)
     rec.to_csv(out / "test_record.csv", index=False)
     with open(out / "hmm_profile.md", "w") as fh:

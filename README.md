@@ -13,7 +13,7 @@ Prof. Eulàlia Nualart). The original single-file research script is kept in
 [`legacy/`](legacy/) for reference.
 
 ```
-137 tests · 96% line coverage · ruff-clean · CI on Python 3.10 and 3.12
+143 tests · 96% line coverage · ruff-clean · CI on Python 3.10 and 3.12
 full pipeline runs offline on synthetic data in ~30 s
 ```
 
@@ -173,7 +173,7 @@ All thirteen differences, their expected effect and the tests that pin them are 
 ## Testing
 
 ```bash
-make test       # 134 fast tests, ~45 s
+make test       # 140 fast tests, ~45 s
 make test-all   # + PPO end-to-end runs and coverage report
 ```
 
@@ -229,9 +229,28 @@ compare alphas and ratios rather than raw returns, since the benchmark window di
 month. Thesis figures for reference: agent 25.02% vs SPY 17.56%, alpha +7.47%, IR 0.51,
 Sharpe 1.25 vs 1.46, max drawdown −21.58%, 90% CI for alpha [−10.33%, +35.08%].
 
+### Is the RL agent worth its complexity?
+
+Every run also scores a ladder of simpler strategies on exactly the same test months, with
+the same cost-adjusted returns, so the agent has to earn its place:
+
+| Strategy | What it adds |
+|---|---|
+| Buy & hold SPY | the benchmark |
+| Top 30 momentum, always | momentum only |
+| Best single strategy | the one action with the best pre-test information ratio, held throughout |
+| Equal mix of all 8 strategies | diversification, no selection |
+| Momentum, bonds when P(bear) > 0.40 | the regime model as a plain rule, no RL |
+| RL agent | learned selection across all eight |
+
+The table is printed at the end of `make run`, saved as `baselines.csv`, stored in the
+`baselines_<mode>` table, and drawn in `figures/panel_G_baselines.png`. The logic is in
+[`evaluation/baselines.py`](src/regime_rl/evaluation/baselines.py); tests check that the
+"best single strategy" is chosen without looking at test-period returns.
+
 Each run writes `outputs/<market>_<mode>/` containing `summary.json`, `bootstrap_ci.csv`,
 `cross_seed_test_metrics.csv`, `seed_selection.csv`, `test_record.csv`, `hmm_profile.md`
-and six figures, and appends a row to the `runs` table.
+and seven figures, and appends a row to the `runs` table.
 
 ## Design decisions
 

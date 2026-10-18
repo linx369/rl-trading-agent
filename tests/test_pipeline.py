@@ -95,7 +95,9 @@ def test_end_to_end_run(tmp_path, synthetic_store, fidelity):
     assert len(res.cross_seed) == 2
     summary = json.loads((res.out_dir / "summary.json").read_text())
     assert summary["fidelity"] == fidelity
-    assert len(list((res.out_dir / "figures").glob("*.png"))) == 6
+    assert len(list((res.out_dir / "figures").glob("*.png"))) == 7
+    assert res.baselines.loc["agent", "alpha"] == pytest.approx(res.metrics["alpha"])
+    assert synthetic_store.has(f"baselines_{fidelity}")
     runs = synthetic_store.sql(f"SELECT * FROM runs WHERE run_id = '{res.run_id}'")
     assert len(runs) == 1
     assert synthetic_store.has(f"holdings_{fidelity}")
