@@ -181,7 +181,8 @@ make compare      # the point_in_time column separates the runs
 ```
 
 **What is still missing:** delisted companies (Lehman Brothers, acquired firms) have no prices on
-Yahoo, so the backtest still cannot buy them. Ingest lists them in the `unavailable` table. Fully
+Yahoo, so the backtest still cannot buy them. In the March 2026 data, 280 of the 446 former
+members since 2006 were unavailable; they are listed in the `unavailable` table. Fully
 removing survivorship bias needs a database with delisted securities, such as CRSP.
 
 ## Two fidelity modes: `tfg` and `corrected`
@@ -229,38 +230,46 @@ Real S&P 500 data, 2006 – March 2026 (500 of 503 current constituents). Out-of
 January 2023 – early 2026. Ten PPO seeds per mode, selected on 2021–2022 validation only.
 Every strategy pays 0.20% per month; alpha is the annual return minus SPY's.
 
-### Headline: with the leaks fixed, simple strategies beat the agent
+### Headline: every bias removed takes away the outperformance
 
-| Strategy | `tfg` (thesis logic) | `corrected` |
-|---|---|---|
-| **RL agent** | **+10.95%** (IR 0.58) | **+0.34%** (IR 0.12) |
-| Top 30 momentum, always | −2.91% | +4.75% |
-| Best single strategy, chosen before 2023 | +3.89% | −13.17% |
-| Equal mix of all 8 strategies | −0.78% | **+10.64%** (IR 0.71) |
-| Momentum, bonds when P(bear) > 0.40 | −5.43% | +4.75% |
+| Strategy (alpha vs SPY, per year) | `tfg` (thesis logic) | `corrected` | `corrected` + point-in-time |
+|---|---|---|---|
+| **RL agent** | **+10.95%** (IR 0.58) | **+0.34%** (IR 0.12) | **−7.04%** (IR −0.39) |
+| Top 30 momentum, always | −2.91% | +4.75% | −2.13% |
+| Best single strategy, chosen before 2023 | +3.89% | −13.17% | +5.64% |
+| Equal mix of all 8 strategies | −0.78% | +10.64% (IR 0.71) | −1.64% |
+| Momentum, bonds when P(bear) > 0.40 | −5.43% | +4.75% | −2.13% |
 
-**Reading the table**
+**Reading the table, column by column**
 
-- **With the thesis logic, the agent looks brilliant**: it beats every simple strategy by at
-  least 7 points a year. That is what you would expect if it is exploiting information
-  it should not have. The regime probabilities in that mode were estimated using future data.
-- **With the leaks removed, the agent's edge disappears** (+0.34% a year) and it is beaten by
-  plainly holding the top 30 momentum stocks (+4.75%) and, by a wide margin, by an equal split
-  across the same eight portfolios (+10.64%). The value is in the portfolios, not in the
-  learned selection, consistent with DeMiguel, Garlappi & Uppal (2009) on how hard naive
-  1/N diversification is to beat.
-- **The regime rule never fired out of sample** in corrected mode (identical to plain momentum):
-  P(bear) never exceeded 40% in 2023–2026, so the crash protection was never tested.
-- **Picking the historical winner backfired**: the strategy with the best record before 2023
-  lost 13% a year relative to SPY afterwards.
+1. **Thesis logic: the agent looks brilliant.** It beats every simple strategy by at least
+   7 points a year, which is what you would expect from a model exploiting information it
+   should not have: its regime probabilities were estimated using future data.
+2. **Look-ahead removed: the agent's edge disappears** (+0.34% a year). Simple strategies now
+   do better, an equal split across the eight portfolios best of all (+10.64%).
+3. **Survivorship bias also reduced: almost nothing beats the index.** With today's S&P 500
+   as the universe, the backtest could buy companies such as Palantir or AppLovin *before*
+   they joined the index, i.e. it was handed the winners in advance. Restricting each stock
+   to its real membership dates turns the equal mix from +10.6% to −1.6% and the agent to
+   −7.0% a year. Only one fixed strategy stays positive, and its interval includes zero.
+
+Other observations:
+
+- **The RL agent never beats the simple alternatives** once either bias is removed.
+- **The regime rule never fired out of sample** (identical to plain momentum in both corrected
+  columns): P(bear) never exceeded 40% in 2023–2026, so the crash protection was never tested.
+- **Validation did not predict the test.** In the point-in-time run the chosen seed scored
+  +7.2% a year on 2021–2022 and −7.0% on 2023–2026.
 - **Nothing here is statistically significant.** Every 90% block-bootstrap interval for alpha
-  includes zero (corrected agent: −10.6% to +27.9%; equal mix: −3.6% to +28.1%). Every seed
-  also lost to SPY on the 2021–2022 validation period, which includes the 2022 bear market.
+  includes zero.
+- **The point-in-time result is still optimistic.** 280 of the 446 former members have no
+  prices on Yahoo (mostly delisted), so on average only about 410 of the ~500 index members
+  can be traded each month, and the missing ones are disproportionately the failures.
 
-`tfg` trades 37 test months because the original environment skipped the last month. The two
-modes also differ in how momentum is measured and which stocks pass the liquidity filter, so
-compare rows within a column, not across. Thesis figures for reference: alpha +7.47%, IR 0.51,
-Sharpe 1.25 vs 1.46, 90% CI for alpha [−10.33%, +35.08%].
+`tfg` trades 37 test months because the original environment skipped the last month. The
+columns also differ in how momentum is measured and which stocks are eligible, so compare
+rows within a column. Thesis figures for reference: alpha +7.47%, IR 0.51, Sharpe 1.25 vs
+1.46, 90% CI for alpha [−10.33%, +35.08%].
 
 ### How the comparison works
 
