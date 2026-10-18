@@ -128,3 +128,16 @@ def test_cli_ingest_and_query(tmp_path, capsys):
         == 0
     )
     assert "12" in capsys.readouterr().out
+
+
+@pytest.mark.slow
+def test_training_is_reproducible(synthetic_store, tmp_path):
+    """Two trainings with the same seed must give the same policy."""
+    from regime_rl.agent.train import rollout, train_agent
+
+    cfg = fast_config(tmp_path)
+    ds = build_dataset(cfg, synthetic_store)
+    train, val, _ = ds.split()
+    a = rollout(train_agent(train, cfg, seed=7), val, cfg)
+    b = rollout(train_agent(train, cfg, seed=7), val, cfg)
+    pd.testing.assert_series_equal(a["action"], b["action"])

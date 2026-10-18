@@ -13,7 +13,7 @@ Prof. Eulàlia Nualart). The original single-file research script is kept in
 [`legacy/`](legacy/) for reference.
 
 ```
-143 tests · 96% line coverage · ruff-clean · CI on Python 3.10 and 3.12
+144 tests · 96% line coverage · ruff-clean · CI on Python 3.10 and 3.12
 full pipeline runs offline on synthetic data in ~30 s
 ```
 

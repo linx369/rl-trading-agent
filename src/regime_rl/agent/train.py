@@ -25,9 +25,24 @@ from regime_rl.env.trading_env import EpisodeData, TradingEnv
 log = logging.getLogger(__name__)
 
 
+def make_torch_deterministic() -> None:
+    """Same seed, same agent, on every machine.
+
+    Multi-threaded matrix maths (e.g. Apple's Accelerate on macOS) can add floating-point
+    sums in a different order from run to run, which PPO then amplifies into different
+    policies. The networks here are tiny, so one thread costs almost nothing.
+    """
+    import torch
+
+    torch.set_num_threads(1)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+
 def train_agent(data: EpisodeData, cfg: Config, seed: int):
     """Train one PPO agent; ``passes`` full sweeps over the training months."""
     from stable_baselines3 import PPO
+
+    make_torch_deterministic()
 
     p = cfg.ppo
     env = TradingEnv(data, cfg)
