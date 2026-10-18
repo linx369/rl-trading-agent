@@ -1,0 +1,22 @@
+# Same as us.yaml, but with point-in-time S&P 500 membership: each stock can only be
+# held while it was actually in the index, and former members are downloaded too.
+# Reduces survivorship bias (delisted companies are still missing; see docs/corrections.md).
+market: US
+fidelity: corrected
+start: "2006-01-01"
+end: "2026-03-31"
+data_dir: data
+output_dir: outputs
+transaction_cost: 0.0020
+
+universe:
+  point_in_time: true
+
+split:
+  val_start: "2021-01-01"
+  test_start: "2023-01-01"
+
+selection:
+  seeds: [42, 7, 13, 99, 2025, 1337, 888, 314, 777, 555]
+  softmax_temperature: 0.5
+  max_ensemble: 3

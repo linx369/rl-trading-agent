@@ -1,0 +1,8 @@
+# Chinese large caps (A-shares, HK and US listings); FXI benchmark.
+market: CN
+fidelity: corrected
+start: "2014-01-01"
+end: "2026-03-31"
+split:
+  val_start: "2021-01-01"
+  test_start: "2023-01-01"

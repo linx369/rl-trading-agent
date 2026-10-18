@@ -1,0 +1,8 @@
+# European large caps; EZU benchmark. Shorter history: EU ETF data is thin before 2011.
+market: EU
+fidelity: corrected
+start: "2011-01-01"
+end: "2026-03-31"
+split:
+  val_start: "2021-01-01"
+  test_start: "2023-01-01"

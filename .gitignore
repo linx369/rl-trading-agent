@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+# data and run artefacts are reproducible from `make ingest run`
+/data/
+/data_smoke/
+/outputs/
+/outputs_smoke/
+*.parquet
+*.zip
+.DS_Store
