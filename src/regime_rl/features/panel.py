@@ -121,23 +121,37 @@ def market_beta(
     return out.shift(1)
 
 
-def liquidity_rank(dollar_vol_m: pd.DataFrame, cfg: Config) -> pd.DataFrame:
+def liquidity_rank(
+    dollar_vol_m: pd.DataFrame, cfg: Config, members: pd.DataFrame | None = None
+) -> pd.DataFrame:
     """Rank of the trailing 60-month average dollar volume (1 = most liquid).
 
     ``tfg``: ranked *within each ticker across time* (the original groupby bug), so the
     filter drops each stock's least-liquid months instead of the least-liquid stocks.
     ``corrected``: ranked *across tickers on each date*.
+    ``members`` (point-in-time mode): only stocks in the index on that date are ranked; the
+    average itself still uses the stock's full past trading history.
     """
     w = cfg.universe.liquidity_window_months
     rv = dollar_vol_m.rolling(w, min_periods=12).mean()
+    if members is not None:
+        rv = rv.where(members.reindex(index=rv.index, columns=rv.columns, fill_value=False))
     axis = 0 if cfg.tfg else 1  # axis=0 ranks down each column (ticker over time)
     return rv.rank(axis=axis, ascending=False)
 
 
 def build_panel(
-    px: PriceFrames, monthly: MonthlyData, bench_monthly_ret: pd.Series, cfg: Config
+    px: PriceFrames,
+    monthly: MonthlyData,
+    bench_monthly_ret: pd.Series,
+    cfg: Config,
+    members: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Month-end feature panel restricted to the liquid, seasoned universe."""
+    """Month-end feature panel restricted to the liquid, seasoned universe.
+
+    ``members`` is an optional (month-end x ticker) boolean frame of index membership; when
+    given, a stock only enters the panel in months when it was actually in the index.
+    """
     daily = daily_indicators(px, cfg)
     feats = {k: v.resample(MONTH_END).last() for k, v in daily.items()}
     feats["beta"] = market_beta(monthly.ret, bench_monthly_ret, cfg)
@@ -148,10 +162,13 @@ def build_panel(
     panel.index.names = ["date", "ticker"]
 
     # Liquidity filter. The original keeps rank < N (strictly), which we preserve in tfg mode.
-    rank = liquidity_rank(monthly.dollar_vol.reindex(columns=tickers), cfg)
+    rank = liquidity_rank(monthly.dollar_vol.reindex(columns=tickers), cfg, members)
     rank = rank.stack(future_stack=True).reindex(panel.index)
     n = cfg.universe.top_n_liquidity
     keep = rank < n if cfg.tfg else rank <= n
+    if members is not None:
+        is_member = members.reindex(columns=tickers, fill_value=False).stack(future_stack=True)
+        keep = keep & is_member.reindex(panel.index, fill_value=False)
 
     # Seasoning: the original required 12 prior *rows* per ticker in the filtered panel
     # (a side-effect of computing 12-month returns then dropna). Corrected mode requires

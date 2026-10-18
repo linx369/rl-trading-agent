@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from regime_rl.config import Config
+from regime_rl.data.membership import fetch_membership, members_since
 from regime_rl.data.sources import PriceSource
 from regime_rl.data.store import MarketStore
 from regime_rl.data.universe import resolve_universe
@@ -84,14 +85,43 @@ def _ingest_table(
     }
 
 
+def _former_members(
+    cfg: Config, store: MarketStore, current: list[str], membership: pd.DataFrame | None
+) -> list[str]:
+    """Store point-in-time membership and return former members to download as well."""
+    if membership is None:
+        log.info("Fetching point-in-time S&P 500 membership from %s", cfg.universe.membership_url)
+        membership = fetch_membership(cfg.universe.membership_url)
+    store.write_table("membership", membership)
+    return sorted(set(members_since(membership, cfg.start)) - set(current))
+
+
 def ingest(
-    cfg: Config, source: PriceSource, store: MarketStore | None = None, full_refresh: bool = False
+    cfg: Config,
+    source: PriceSource,
+    store: MarketStore | None = None,
+    full_refresh: bool = False,
+    membership: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Download (or top up) stock and ETF prices for ``cfg.market`` into the store."""
+    """Download (or top up) stock and ETF prices for ``cfg.market`` into the store.
+
+    With ``universe.point_in_time`` the historical membership is stored too, and every company
+    that was in the index since ``cfg.start`` is downloaded, not only today's members.
+    Former members with no data on Yahoo (usually delisted) are remembered in the
+    ``unavailable`` table and skipped next time unless ``full_refresh`` is set.
+    """
     store = store or MarketStore(cfg.data_dir, cfg.market_code)
     market = cfg.market
-    tickers, uni_source = resolve_universe(market, synthetic=source.name == "synthetic")
+    current, uni_source = resolve_universe(market, synthetic=source.name == "synthetic")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    former: list[str] = []
+    if cfg.universe.point_in_time:
+        former = _former_members(cfg, store, current, membership)
+        if store.has("unavailable") and not full_refresh:
+            known = set(store.read_table("unavailable")["ticker"])
+            former = [t for t in former if t not in known]
+    tickers = current + former
 
     store.append_table(
         "universe",
@@ -99,7 +129,7 @@ def ingest(
             {
                 "snapshot_date": pd.Timestamp(now.date()),
                 "ticker": tickers,
-                "source": uni_source,
+                "source": [uni_source] * len(current) + ["historical"] * len(former),
             }
         ),
     )
@@ -122,10 +152,24 @@ def ingest(
             "This is usually a network or Yahoo rate-limit problem: wait a few minutes and "
             "run ingest again (it only fetches what is missing)."
         )
-    if stocks["tickers_stored"] < MIN_COVERAGE * stocks["tickers_requested"]:
+    stored = set(store.last_dates("prices").index) if store.has("prices") else set()
+    if former:
+        gone = sorted(set(former) - stored)
+        if gone:
+            store.append_table(
+                "unavailable", pd.DataFrame({"ticker": gone, "checked_at": pd.Timestamp(now)})
+            )
+            log.info(
+                "%d of %d former members have no prices (usually delisted); they cannot be "
+                "traded in the backtest.",
+                len(gone),
+                len(former),
+            )
+    n_current = len(set(current) & stored)
+    if n_current < MIN_COVERAGE * len(current):
         log.warning(
-            "Only %d of %d stocks have data. Run ingest again to fill the gaps before `run`.",
-            stocks["tickers_stored"],
-            stocks["tickers_requested"],
+            "Only %d of %d current stocks have data. Run ingest again to fill the gaps.",
+            n_current,
+            len(current),
         )
     return log_rows

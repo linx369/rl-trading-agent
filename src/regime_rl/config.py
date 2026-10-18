@@ -37,6 +37,13 @@ class UniverseConfig:
     min_history_days: int = 50
     crash_threshold: float = -0.10  # exclude stocks down more than this last month
     min_names_after_filter: int = 5
+    # Point-in-time membership (US only): a stock is only eligible while it was actually in
+    # the index, and former members are downloaded too. Reduces survivorship bias.
+    point_in_time: bool = False
+    membership_url: str = (
+        "https://raw.githubusercontent.com/fja05680/sp500/"
+        "a2430f2af0c79ddf0748e91de11bdeb1616ab5a7/sp500_ticker_start_end.csv"
+    )
 
 
 @dataclass(frozen=True)
@@ -124,6 +131,8 @@ class Config:
         get_market(self.market_code)  # validate early
         if not (self.start < self.split.val_start < self.split.test_start < self.end):
             raise ValueError("Expected start < val_start < test_start < end")
+        if self.universe.point_in_time and self.market_code != "US":
+            raise ValueError("point_in_time membership is only available for the US market")
 
     @property
     def tfg(self) -> bool:
@@ -135,8 +144,13 @@ class Config:
         return get_market(self.market_code)
 
     @property
+    def tag(self) -> str:
+        """Run label used for output folders and store tables, e.g. ``corrected_pit``."""
+        return self.fidelity + ("_pit" if self.universe.point_in_time else "")
+
+    @property
     def run_dir(self) -> Path:
-        return Path(self.output_dir) / f"{self.market_code.lower()}_{self.fidelity}"
+        return Path(self.output_dir) / f"{self.market_code.lower()}_{self.tag}"
 
     def replace(self, **changes: Any) -> Config:
         return dataclasses.replace(self, **changes)

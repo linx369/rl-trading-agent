@@ -45,8 +45,10 @@ These were fixed outright because they affect reproducibility, not methodology:
 
 ## Unchanged known limitations
 
-* **Survivorship bias**: the universe is today's S&P 500 constituents. A point-in-time
-  constituent history would be needed to remove it; the store records the snapshot date.
+* **Survivorship bias** (partly addressed, opt-in): by default the universe is today's S&P 500
+  constituents. `universe.point_in_time: true` (see `configs/us_pit.yaml`) restricts each stock
+  to its actual membership dates and adds former members that still trade. Delisted companies
+  remain missing because Yahoo has no prices for them. It is independent of `fidelity`.
 * **Flat 20 bp cost** per month regardless of turnover.
 * **No risk-free rate** in the Sharpe ratio; "alpha" is the difference in annualised returns.
 * **Gates** in the code differ from the thresholds written in Section 3.4 of the thesis (no

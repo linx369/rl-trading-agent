@@ -13,7 +13,7 @@ Prof. Eulàlia Nualart). The original single-file research script is kept in
 [`legacy/`](legacy/) for reference.
 
 ```
-144 tests · 96% line coverage · ruff-clean · CI on Python 3.10 and 3.12
+155 tests · 95% line coverage · ruff-clean · CI on Python 3.10 and 3.12
 full pipeline runs offline on synthetic data in ~30 s
 ```
 
@@ -44,6 +44,7 @@ make smoke                   # whole pipeline on synthetic data (~30 s)
 make ingest                  # download 20 years of S&P 500 prices into data/US/*.parquet
 make run                     # corrected methodology (10 seeds; ~2 min on a laptop CPU)
 make run-tfg                 # reproduce the thesis logic exactly
+make ingest-pit run-pit      # point-in-time S&P 500 membership (less survivorship bias)
 make compare                 # both runs side by side, straight from SQL
 ```
 
@@ -114,6 +115,8 @@ every run (the original script spent 10–20 minutes downloading each time).
 | `etf_prices` | date × ticker | benchmark, TLT, HYG, IWM, QQQ, sector ETFs |
 | `universe` | snapshot × ticker | constituent list and where it came from |
 | `ingest_log` | ingestion run | rows fetched, rows rejected, source, window |
+| `membership` | membership spell | ticker, date joined, date left (point-in-time mode) |
+| `unavailable` | ticker | former members Yahoo has no prices for (skipped on later ingests) |
 | `regimes_<mode>` | month | HMM probabilities |
 | `state_<mode>` | month | the normalised observation the agent sees |
 | `strategy_returns_<mode>` | month × action | next-month net return of each portfolio |
@@ -155,6 +158,32 @@ WHERE date < '2021-01-01' GROUP BY 1;
 | **Split** | Train 2006–2020, validation 2021–2022, test 2023–2026, chronological. |
 | **Robustness** | Cross-seed test distribution, 6-month moving-block bootstrap (2,000 reps), 2-year Monte Carlo (1,000 paths). |
 
+## Survivorship bias: point-in-time membership
+
+Using today's S&P 500 for a 2006–2026 backtest quietly gives the strategy two advantages: it
+can buy companies years before they were added to the index (Tesla joined in December 2020),
+and companies that left the index are simply absent. Momentum, which buys recent winners, is
+flattered by both.
+
+`configs/us_pit.yaml` turns on point-in-time membership, using the public membership history
+at [fja05680/sp500](https://github.com/fja05680/sp500) (MIT licence, pinned to a commit):
+
+- each stock is eligible only between the dates it joined and left the index;
+- the ~960 companies that were members at any point since 2006 are downloaded, not just
+  today's 500, so former members that still trade are included;
+- ticker changes (FB → META, ANTM → ELV, …) are mapped so a renamed company keeps its full
+  membership, and a rename is only applied when the membership file confirms it.
+
+```bash
+make ingest-pit   # downloads former members too (takes longer the first time)
+make run-pit      # results go to outputs/us_corrected_pit/
+make compare      # the point_in_time column separates the runs
+```
+
+**What is still missing:** delisted companies (Lehman Brothers, acquired firms) have no prices on
+Yahoo, so the backtest still cannot buy them. Ingest lists them in the `unavailable` table. Fully
+removing survivorship bias needs a database with delisted securities, such as CRSP.
+
 ## Two fidelity modes: `tfg` and `corrected`
 
 Refactoring the original script surfaced several defects: most importantly, **look-ahead
@@ -173,7 +202,7 @@ All thirteen differences, their expected effect and the tests that pin them are 
 ## Testing
 
 ```bash
-make test       # 140 fast tests, ~45 s
+make test       # 151 fast tests, ~45 s
 make test-all   # + PPO end-to-end runs and coverage report
 ```
 
@@ -266,8 +295,11 @@ and seven figures, and appends a row to the `runs` table.
 
 ## Limitations
 
-- **Survivorship bias.** The universe is today's S&P 500, so companies that failed or left the
-  index are missing and historical returns are overstated by an unknown amount.
+- **Survivorship bias, partly fixed.** By default the universe is today's S&P 500. The
+  point-in-time option (`configs/us_pit.yaml`) only lets a stock be held while it was actually in
+  the index, and also downloads former members that still trade. Companies that were delisted
+  (bankruptcies, takeovers) have no free price data, so they remain missing; removing that last
+  part needs a paid database such as CRSP.
 - **Short, favourable test window.** 2023–2026 was a momentum-friendly, AI-led bull market.
 - **Seed sensitivity.** PPO results vary widely across seeds; the cross-seed table shows the spread.
 - **Costs.** A flat 20 bp per month is an institutional-level cost and ignores turnover.

@@ -61,8 +61,9 @@ def cmd_run(args) -> int:
         ("Max drawdown", "max_dd", True),
         ("Calmar ratio", "calmar", False),
     ]
+    universe = "point-in-time members" if cfg.universe.point_in_time else "current members"
     print(
-        f"\nOut-of-sample ({cfg.market_code}, fidelity={cfg.fidelity}, "
+        f"\nOut-of-sample ({cfg.market_code}, fidelity={cfg.fidelity}, {universe}, "
         f"{len(res.test_record)} months)"
     )
     print(f"{'Metric':<20}{'Agent':>12}{'Benchmark':>12}")

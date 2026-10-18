@@ -141,3 +141,74 @@ def test_training_is_reproducible(synthetic_store, tmp_path):
     a = rollout(train_agent(train, cfg, seed=7), val, cfg)
     b = rollout(train_agent(train, cfg, seed=7), val, cfg)
     pd.testing.assert_series_equal(a["action"], b["action"])
+
+
+# ----------------------------------------------------------------- point-in-time universe
+@pytest.fixture(scope="module")
+def pit_store(tmp_path_factory):
+    """Synthetic store where AAPL joins in 2016, FORMER leaves in 2012, GONE has no prices."""
+    from regime_rl.config import UniverseConfig
+    from regime_rl.data.ingest import ingest
+    from regime_rl.data.sources import SyntheticSource
+    from regime_rl.data.store import MarketStore
+    from regime_rl.data.universe import resolve_universe
+
+    root = tmp_path_factory.mktemp("pit")
+    cfg = Config(
+        data_dir=str(root), universe=UniverseConfig(point_in_time=True, top_n_liquidity=500)
+    )
+    current, _ = resolve_universe(cfg.market, synthetic=True)
+    rows = [(t, "1996-01-02", None) for t in current if t != "AAPL"]
+    rows += [
+        ("AAPL", "2016-03-01", None),
+        ("FORMER", "1996-01-02", "2012-06-15"),
+        ("GONE", "1996-01-02", "2009-01-01"),
+    ]
+    membership = pd.DataFrame(rows, columns=["ticker", "start", "end"]).assign(
+        start=lambda d: pd.to_datetime(d.start), end=lambda d: pd.to_datetime(d.end)
+    )
+
+    class NoGone(SyntheticSource):
+        calls: list = []
+
+        def fetch(self, tickers, start, end):
+            NoGone.calls.append(list(tickers))
+            return super().fetch([t for t in tickers if t != "GONE"], start, end)
+
+    src = NoGone(sector_map=cfg.market.sector_map, late_listing_share=0.0)
+    store = MarketStore(root, "US")
+    ingest(cfg, src, store, membership=membership)
+    first_calls = len(NoGone.calls)
+    ingest(cfg, src, store, membership=membership)
+    return cfg, store, NoGone.calls[first_calls:]
+
+
+def test_pit_ingest_downloads_former_members(pit_store):
+    _, store, second_calls = pit_store
+    stored = set(store.last_dates("prices").index)
+    assert "FORMER" in stored and "GONE" not in stored
+    assert set(store.read_table("unavailable")["ticker"]) == {"GONE"}
+    assert not any("GONE" in c for c in second_calls)  # not retried on the next ingest
+    assert store.has("membership")
+
+
+def test_pit_panel_respects_membership_dates(pit_store):
+    cfg, store, _ = pit_store
+    ds = build_dataset(cfg, store)
+    dates = ds.panel.index.get_level_values("date")
+    tickers = ds.panel.index.get_level_values("ticker")
+    aapl = dates[tickers == "AAPL"]
+    assert len(aapl) > 0 and aapl.min() >= pd.Timestamp("2016-03-31")
+    former = dates[tickers == "FORMER"]
+    assert len(former) > 0 and former.max() <= pd.Timestamp("2012-05-31")
+
+
+def test_non_pit_run_ignores_former_members(pit_store):
+    from regime_rl.config import UniverseConfig
+    from regime_rl.pipeline import stock_universe
+
+    cfg, store, _ = pit_store
+    plain = cfg.replace(universe=UniverseConfig(top_n_liquidity=60))
+    tickers = stock_universe(plain, store)
+    assert "FORMER" not in tickers and "AAPL" in tickers
+    assert stock_universe(cfg, store) is None  # point-in-time: everything stored

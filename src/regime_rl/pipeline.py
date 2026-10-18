@@ -18,6 +18,7 @@ import pandas as pd
 
 from regime_rl.agent.train import SelectionResult, rollout, select_policy
 from regime_rl.config import Config
+from regime_rl.data.membership import membership_matrix
 from regime_rl.data.store import MarketStore
 from regime_rl.env.reward import zscore_to_unit
 from regime_rl.env.trading_env import EpisodeData
@@ -77,10 +78,30 @@ class Dataset:
         return tuple(self.episode.slice(np.asarray(m)) for m in parts)  # type: ignore[return-value]
 
 
+def stock_universe(cfg: Config, store: MarketStore) -> list[str] | None:
+    """Tickers to load from the price store.
+
+    Point-in-time runs use every stored stock (current and former members). Other runs use
+    only the latest list of *current* constituents, so downloading former members for a
+    point-in-time run does not change their results. ``None`` means "all stored tickers".
+    """
+    if cfg.universe.point_in_time or not store.has("universe"):
+        return None
+    uni = store.read_table("universe")
+    uni = uni[uni["source"] != "historical"]
+    if uni.empty:
+        return None
+    latest = uni["snapshot_date"].max()
+    return sorted(uni.loc[uni["snapshot_date"] == latest, "ticker"].unique())
+
+
 def build_dataset(cfg: Config, store: MarketStore) -> Dataset:
     market = cfg.market
     log.info("Loading prices from %s", store.dir)
-    px = PriceFrames.from_long(store.load_prices("prices", start=cfg.start, end=cfg.end))
+    tickers = stock_universe(cfg, store)
+    px = PriceFrames.from_long(
+        store.load_prices("prices", tickers=tickers, start=cfg.start, end=cfg.end)
+    )
     etf = PriceFrames.from_long(store.load_prices("etf_prices", start=cfg.start, end=cfg.end))
     if market.benchmark not in etf.adj_close:
         raise ValueError(f"Benchmark {market.benchmark} not in stored ETF prices")
@@ -90,8 +111,18 @@ def build_dataset(cfg: Config, store: MarketStore) -> Dataset:
     bench_ret = bench_m.pct_change(fill_method=None)
     monthly = monthly_data(px)
 
+    members = None
+    if cfg.universe.point_in_time:
+        if not store.has("membership"):
+            raise ValueError("point_in_time is on but no membership table: run ingest first")
+        members = membership_matrix(store.read_table("membership"), monthly.adj.index, px.tickers)
+        log.info(
+            "Point-in-time universe: %d stocks with prices, %.0f index members per month on average",
+            len(px.tickers),
+            members.sum(axis=1).mean(),
+        )
     log.info("Building monthly panel (%d tickers)…", len(px.tickers))
-    panel = build_panel(px, monthly, bench_ret, cfg)
+    panel = build_panel(px, monthly, bench_ret, cfg, members)
     cs = cross_section(panel)
 
     train_end = pd.Timestamp(cfg.split.val_start) - pd.Timedelta(days=1)
@@ -253,7 +284,7 @@ def _persist(
     out: Path,
     blocks,
 ) -> None:
-    tag = f"{cfg.fidelity}"
+    tag = cfg.tag
     rec = ev["record"].reset_index()
     rec["allowed"] = rec["allowed"].astype(str)
     store.write_table(f"regimes_{tag}", ds.regimes_raw.reset_index(names="date"))
@@ -267,6 +298,7 @@ def _persist(
         "run_id": run_id,
         "market": cfg.market_code,
         "fidelity": cfg.fidelity,
+        "point_in_time": cfg.universe.point_in_time,
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "months": {k: len(b.dates) for k, b in zip(("train", "val", "test"), blocks, strict=True)},
         "test_period": [str(blocks[2].dates[0].date()), str(blocks[2].dates[-1].date())],
@@ -307,6 +339,7 @@ def _persist(
         "created_utc": summary["created_utc"],
         "market": cfg.market_code,
         "fidelity": cfg.fidelity,
+        "point_in_time": cfg.universe.point_in_time,
         "seeds": json.dumps(sel.policy.seeds),
         **{f"test_{k}": v for k, v in ev["metrics"].items()},
         **{f"bench_{k}": v for k, v in ev["bench"].items()},
